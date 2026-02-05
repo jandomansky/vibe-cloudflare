@@ -3,62 +3,752 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Metrostav Vision</title>
+  <title>Metrostav Vision – Tagování fotek</title>
+  <meta name="description" content="Nahraj fotku a získej seznam rozpoznaných objektů pomocí AI." />
+
+  <style>
+    :root{
+      --bg: #0b1220;
+      --panel: rgba(255,255,255,.06);
+      --panel2: rgba(255,255,255,.09);
+      --border: rgba(255,255,255,.12);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.68);
+      --muted2: rgba(255,255,255,.55);
+      --shadow: 0 20px 60px rgba(0,0,0,.35);
+      --radius: 18px;
+      --radius2: 14px;
+      --pad: 18px;
+      --accent: #7dd3fc; /* jen pro zvýraznění */
+      --good: #86efac;
+      --warn: #fde68a;
+      --bad: #fca5a5;
+      --chip: rgba(255,255,255,.09);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      min-height:100vh;
+      color:var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background:
+        radial-gradient(1200px 600px at 10% 0%, rgba(125,211,252,.18), transparent 55%),
+        radial-gradient(900px 550px at 90% 10%, rgba(134,239,172,.14), transparent 55%),
+        radial-gradient(800px 500px at 50% 100%, rgba(252,165,165,.10), transparent 60%),
+        var(--bg);
+    }
+    .wrap{
+      max-width: 1050px;
+      margin: 0 auto;
+      padding: 32px 18px 46px;
+    }
+    .topbar{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:16px;
+      margin-bottom: 18px;
+    }
+    .brand{
+      display:flex; flex-direction:column; gap:6px;
+    }
+    .title{
+      font-size: 28px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin:0;
+    }
+    .subtitle{
+      margin:0;
+      color:var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04));
+      border-radius: 999px;
+      box-shadow: 0 10px 25px rgba(0,0,0,.25);
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .dot{
+      width:10px; height:10px;
+      border-radius:999px;
+      background: rgba(255,255,255,.35);
+      box-shadow: 0 0 0 4px rgba(255,255,255,.08);
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: 1.05fr .95fr;
+      gap: 16px;
+      align-items:start;
+    }
+    @media (max-width: 920px){
+      .grid{grid-template-columns:1fr; }
+      .badge{display:none;}
+    }
+
+    .card{
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.04));
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .card-h{
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:12px;
+    }
+    .card-h h2{
+      margin:0;
+      font-size: 15px;
+      letter-spacing: .01em;
+    }
+    .card-b{
+      padding: 18px;
+    }
+
+    .uploader{
+      display:flex;
+      flex-direction:column;
+      gap: 14px;
+    }
+    .drop{
+      border: 1px dashed rgba(255,255,255,.18);
+      background: rgba(0,0,0,.10);
+      border-radius: var(--radius2);
+      padding: 16px;
+      display:flex;
+      gap: 14px;
+      align-items:center;
+      justify-content:space-between;
+    }
+    .drop-left{
+      display:flex;
+      gap: 12px;
+      align-items:center;
+      min-width: 0;
+    }
+    .icon{
+      width: 42px; height: 42px;
+      border-radius: 12px;
+      display:grid; place-items:center;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.07);
+      flex: 0 0 auto;
+    }
+    .drop-text{
+      min-width: 0;
+    }
+    .drop-text strong{
+      display:block;
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+    .drop-text span{
+      display:block;
+      font-size: 12px;
+      color: var(--muted);
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 520px;
+    }
+    .controls{
+      display:flex;
+      flex-wrap:wrap;
+      gap: 10px;
+      align-items:center;
+    }
+    .btn{
+      appearance:none;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.08);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor:pointer;
+      transition: transform .08s ease, background .12s ease, border-color .12s ease;
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      user-select:none;
+    }
+    .btn:hover{ background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.18); }
+    .btn:active{ transform: translateY(1px); }
+    .btn.primary{
+      background: rgba(125,211,252,.18);
+      border-color: rgba(125,211,252,.35);
+    }
+    .btn.primary:hover{
+      background: rgba(125,211,252,.24);
+      border-color: rgba(125,211,252,.48);
+    }
+    .btn.ghost{
+      background: transparent;
+    }
+    .btn:disabled{
+      opacity: .55;
+      cursor: not-allowed;
+    }
+
+    .file{
+      display:none;
+    }
+
+    .status{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      color: var(--muted);
+      font-size: 13px;
+      min-height: 20px;
+    }
+    .spinner{
+      width: 16px;
+      height: 16px;
+      border-radius: 999px;
+      border: 2px solid rgba(255,255,255,.22);
+      border-top-color: rgba(255,255,255,.72);
+      animation: spin .9s linear infinite;
+      display:none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .preview{
+      display:grid;
+      grid-template-columns: 140px 1fr;
+      gap: 12px;
+      align-items:start;
+      margin-top: 6px;
+    }
+    @media (max-width: 520px){
+      .preview{ grid-template-columns: 1fr; }
+    }
+    .thumb{
+      width: 140px;
+      height: 140px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,.18);
+      overflow:hidden;
+      display:grid;
+      place-items:center;
+    }
+    .thumb img{
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      display:none;
+    }
+    .thumb .ph{
+      color: var(--muted2);
+      font-size: 12px;
+      text-align:center;
+      padding: 10px;
+    }
+
+    .hint{
+      color: var(--muted2);
+      font-size: 12px;
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    .result{
+      display:flex;
+      flex-direction:column;
+      gap: 14px;
+    }
+    .caption{
+      margin:0;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .chips{
+      display:flex;
+      flex-wrap:wrap;
+      gap: 8px;
+    }
+    .chip{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--chip);
+      font-size: 13px;
+      color: var(--text);
+    }
+    .chip small{
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+
+    .list{
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,.10);
+      border-radius: 14px;
+      overflow:hidden;
+    }
+    .list-head{
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+    }
+    .list-head .meta{
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .list ul{
+      margin:0;
+      padding: 0;
+      list-style:none;
+      max-height: 430px;
+      overflow:auto;
+    }
+    .list li{
+      display:flex;
+      justify-content:space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+      font-size: 14px;
+    }
+    .list li:last-child{ border-bottom:none; }
+    .conf{
+      font-size: 12px;
+      color: var(--muted);
+      white-space:nowrap;
+    }
+    .conf.high{ color: var(--good); }
+    .conf.medium{ color: var(--warn); }
+    .conf.low{ color: var(--muted); }
+
+    .toast{
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,.55);
+      border: 1px solid rgba(255,255,255,.16);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      box-shadow: 0 16px 40px rgba(0,0,0,.35);
+      opacity: 0;
+      pointer-events:none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .toast.show{
+      opacity: 1;
+      transform: translateX(-50%) translateY(-2px);
+    }
+
+    .footer{
+      margin-top: 14px;
+      color: var(--muted2);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    a{ color: var(--accent); text-decoration:none; }
+    a:hover{ text-decoration:underline; }
+  </style>
 </head>
 
 <body>
-  <h1>Metrostav Vision – objekty z fotky 📸</h1>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <h1 class="title">Metrostav Vision</h1>
+        <p class="subtitle">Nahraj fotku a AI vypíše rozpoznané objekty. Výstup je čistý text, žádný „kód“.</p>
+      </div>
+      <div class="badge" title="Běží na Cloudflare Pages + Functions (Workers AI)">
+        <span class="dot" id="dot"></span>
+        <span id="badgeText">Připraveno</span>
+      </div>
+    </div>
 
-  <input id="file" type="file" accept="image/*" />
-  <button id="go">Analyzovat</button>
+    <div class="grid">
+      <!-- LEFT: Upload -->
+      <div class="card">
+        <div class="card-h">
+          <h2>1) Nahraj fotku</h2>
+          <div class="controls">
+            <button class="btn ghost" id="pickBtn" type="button">Vybrat soubor</button>
+            <button class="btn primary" id="goBtn" type="button" disabled>Analyzovat</button>
+          </div>
+        </div>
+        <div class="card-b">
+          <div class="uploader">
+            <div class="drop" id="drop">
+              <div class="drop-left">
+                <div class="icon" aria-hidden="true">📷</div>
+                <div class="drop-text">
+                  <strong id="fileTitle">Přetáhni fotku sem</strong>
+                  <span id="fileDesc">nebo ji vyber tlačítkem. Doporučeno: JPG/PNG.</span>
+                </div>
+              </div>
+              <div class="controls">
+                <label class="btn" for="fileInput">Procházet</label>
+                <input class="file" id="fileInput" type="file" accept="image/*" />
+              </div>
+            </div>
 
-  <p id="status"></p>
-  <div id="out"></div>
+            <div class="preview">
+              <div class="thumb">
+                <div class="ph" id="ph">Náhled se zobrazí po výběru fotky.</div>
+                <img id="imgPreview" alt="Náhled fotografie" />
+              </div>
+
+              <div>
+                <div class="status">
+                  <div class="spinner" id="spin"></div>
+                  <span id="status">Vyber fotku a klikni na „Analyzovat“.</span>
+                </div>
+                <p class="hint">
+                  Tip: Fotku před odesláním automaticky převedu na čistý JPEG (kvůli kompatibilitě) a zmenším na max 1600 px.
+                </p>
+              </div>
+            </div>
+
+            <p class="footer">
+              Soukromí: fotka se jen zpracuje a nikam se neukládá (pokud si to později výslovně nepřidáš např. do R2).
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Results -->
+      <div class="card">
+        <div class="card-h">
+          <h2>2) Výsledek</h2>
+          <div class="controls">
+            <button class="btn" id="copyBtn" type="button" disabled>📋 Kopírovat seznam</button>
+            <button class="btn" id="clearBtn" type="button">Vymazat</button>
+          </div>
+        </div>
+
+        <div class="card-b">
+          <div class="result" id="result">
+            <p class="caption" id="caption" style="display:none;"></p>
+
+            <div class="chips" id="chips" style="display:none;"></div>
+
+            <div class="list" id="list" style="display:none;">
+              <div class="list-head">
+                <div class="meta" id="meta">0 objektů</div>
+                <div class="meta" id="meta2"></div>
+              </div>
+              <ul id="ul"></ul>
+            </div>
+
+            <p class="hint" id="empty">
+              Zatím nic. Nahraj fotku a spusť analýzu – objekty se vypíšou jako seznam pod sebou.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">Zkopírováno</div>
 
   <script>
-    const statusEl = document.getElementById("status");
-    const out = document.getElementById("out");
+    const API_URL = "/api/objects";
 
-    document.getElementById("go").addEventListener("click", async () => {
+    const fileInput = document.getElementById("fileInput");
+    const pickBtn = document.getElementById("pickBtn");
+    const goBtn = document.getElementById("goBtn");
+    const copyBtn = document.getElementById("copyBtn");
+    const clearBtn = document.getElementById("clearBtn");
+
+    const statusEl = document.getElementById("status");
+    const spin = document.getElementById("spin");
+    const dot = document.getElementById("dot");
+    const badgeText = document.getElementById("badgeText");
+
+    const imgPreview = document.getElementById("imgPreview");
+    const ph = document.getElementById("ph");
+    const fileTitle = document.getElementById("fileTitle");
+    const fileDesc = document.getElementById("fileDesc");
+
+    const captionEl = document.getElementById("caption");
+    const chipsEl = document.getElementById("chips");
+    const listEl = document.getElementById("list");
+    const ul = document.getElementById("ul");
+    const meta = document.getElementById("meta");
+    const meta2 = document.getElementById("meta2");
+    const empty = document.getElementById("empty");
+
+    const toast = document.getElementById("toast");
+
+    let lastObjects = [];
+    let lastCaption = "";
+    let lastFile = null;
+
+    pickBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => onFileSelected(fileInput.files?.[0]));
+
+    // Drag & drop
+    const drop = document.getElementById("drop");
+    drop.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      drop.style.background = "rgba(255,255,255,.06)";
+      drop.style.borderColor = "rgba(255,255,255,.24)";
+    });
+    drop.addEventListener("dragleave", () => {
+      drop.style.background = "rgba(0,0,0,.10)";
+      drop.style.borderColor = "rgba(255,255,255,.18)";
+    });
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.style.background = "rgba(0,0,0,.10)";
+      drop.style.borderColor = "rgba(255,255,255,.18)";
+      const f = e.dataTransfer.files?.[0];
+      if (f) onFileSelected(f);
+    });
+
+    goBtn.addEventListener("click", async () => {
+      if (!lastFile) return;
+      setBusy(true, "Převádím fotku na čistý JPEG a odesílám…");
+
       try {
-        const f = document.getElementById("file").files?.[0];
-        if (!f) {
-          statusEl.textContent = "Vyber fotku.";
+        // Always convert to clean JPEG for compatibility
+        const resized = await fileToCleanJpeg(lastFile, 1600, 0.85);
+
+        setBusy(true, "AI analyzuje…");
+        const fd = new FormData();
+        fd.append("file", resized, resized.name);
+
+        const r = await fetch(API_URL, { method: "POST", body: fd });
+        const text = await r.text();
+
+        let data;
+        try { data = JSON.parse(text); }
+        catch { data = { ok: false, error: "Non-JSON response", raw: text }; }
+
+        if (!r.ok || !data.ok) {
+          const msg = data?.error ? String(data.error) : `Chyba ${r.status}`;
+          setBusy(false, msg);
+          setHealth("error");
+          renderError(data);
           return;
         }
 
-        statusEl.textContent = "Převádím fotku na JPEG a zmenšuji…";
-        out.textContent = "";
-
-        // ✅ vždy vytvoříme "čistý" JPEG
-        const resizedJpeg = await fileToCleanJpeg(f, 1600, 0.85);
-
-        const fd = new FormData();
-        fd.append("file", resizedJpeg, resizedJpeg.name);
-
-        statusEl.textContent = "AI analyzuje…";
-        const r = await fetch("/api/objects", { method: "POST", body: fd });
-
-        // ✅ nejdřív text, abychom zvládli i HTML error page
-        const text = await r.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = { ok: false, error: "Non-JSON response", raw: text };
-        }
-
-        statusEl.textContent = r.ok ? "Hotovo ✅" : `Chyba ${r.status} ❌`;
-        out.textContent = JSON.stringify(data, null, 2);
+        setBusy(false, "Hotovo ✅");
+        setHealth("ok");
+        renderSuccess(data);
       } catch (e) {
-        statusEl.textContent = "Spadlo to v prohlížeči ❌";
-        out.textContent = String(e);
+        setBusy(false, "Spadlo to v prohlížeči ❌");
+        setHealth("error");
+        renderError({ ok: false, error: String(e) });
         console.error(e);
       }
     });
 
-    // --- Helpers ---
+    copyBtn.addEventListener("click", async () => {
+      const lines = lastObjects.map(o => o.confidence ? `${o.name} (${o.confidence})` : o.name);
+      const text = [lastCaption ? lastCaption : null, ...lines].filter(Boolean).join("\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast("Zkopírováno ✅");
+      } catch {
+        showToast("Nepovedlo se zkopírovat ❌");
+      }
+    });
 
+    clearBtn.addEventListener("click", () => {
+      fileInput.value = "";
+      lastFile = null;
+      resetUI();
+      setHealth("idle");
+      setBusy(false, "Vyber fotku a klikni na „Analyzovat“.");
+    });
+
+    function onFileSelected(file) {
+      if (!file) return;
+
+      lastFile = file;
+      goBtn.disabled = false;
+      setHealth("idle");
+      setBusy(false, "Připraveno k analýze.");
+
+      fileTitle.textContent = "Vybráno";
+      fileDesc.textContent = `${file.name} • ${(file.size / (1024*1024)).toFixed(2)} MB`;
+
+      // preview
+      const url = URL.createObjectURL(file);
+      imgPreview.onload = () => URL.revokeObjectURL(url);
+      imgPreview.src = url;
+      imgPreview.style.display = "block";
+      ph.style.display = "none";
+    }
+
+    function resetUI(){
+      // preview
+      imgPreview.src = "";
+      imgPreview.style.display = "none";
+      ph.style.display = "block";
+
+      fileTitle.textContent = "Přetáhni fotku sem";
+      fileDesc.textContent = "nebo ji vyber tlačítkem. Doporučeno: JPG/PNG.";
+
+      // results
+      captionEl.style.display = "none";
+      chipsEl.style.display = "none";
+      listEl.style.display = "none";
+      empty.style.display = "block";
+      ul.innerHTML = "";
+      meta.textContent = "0 objektů";
+      meta2.textContent = "";
+
+      // state
+      copyBtn.disabled = true;
+      lastObjects = [];
+      lastCaption = "";
+    }
+
+    function setBusy(busy, text){
+      spin.style.display = busy ? "inline-block" : "none";
+      statusEl.textContent = text || "";
+      goBtn.disabled = busy || !lastFile;
+    }
+
+    function setHealth(state){
+      // badge dot colors without adding CSS vars (simple)
+      if (state === "ok") {
+        dot.style.background = "rgba(134,239,172,.95)";
+        badgeText.textContent = "Hotovo";
+      } else if (state === "error") {
+        dot.style.background = "rgba(252,165,165,.95)";
+        badgeText.textContent = "Chyba";
+      } else {
+        dot.style.background = "rgba(255,255,255,.35)";
+        badgeText.textContent = "Připraveno";
+      }
+    }
+
+    function renderError(data){
+      // Show a friendly message (not a code block)
+      resetResultsOnly();
+      empty.style.display = "block";
+      empty.textContent = (data && data.error) ? String(data.error) : "Něco se pokazilo.";
+      // enable copy only when we have objects
+      copyBtn.disabled = true;
+    }
+
+    function renderSuccess(data){
+      resetResultsOnly();
+
+      lastCaption = (data.caption || "").toString().trim();
+      lastObjects = Array.isArray(data.objects) ? data.objects : [];
+
+      // caption
+      if (lastCaption) {
+        captionEl.textContent = lastCaption;
+        captionEl.style.display = "block";
+      } else {
+        captionEl.style.display = "none";
+      }
+
+      // chips (top 8)
+      if (lastObjects.length) {
+        chipsEl.innerHTML = "";
+        chipsEl.style.display = "flex";
+        lastObjects.slice(0, 8).forEach(o => {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          const name = (o?.name || "").toString();
+          const conf = (o?.confidence || "").toString();
+          chip.innerHTML = `<span>${escapeHtml(name)}</span><small>${escapeHtml(conf)}</small>`;
+          chipsEl.appendChild(chip);
+        });
+      } else {
+        chipsEl.style.display = "none";
+      }
+
+      // list
+      listEl.style.display = "block";
+      empty.style.display = "none";
+      ul.innerHTML = "";
+
+      const sorted = [...lastObjects].sort((a,b) => confRank(b.confidence) - confRank(a.confidence));
+      for (const o of sorted) {
+        const li = document.createElement("li");
+        const left = document.createElement("span");
+        left.textContent = (o?.name || "").toString();
+
+        const right = document.createElement("span");
+        const conf = (o?.confidence || "").toString();
+        right.textContent = conf;
+        right.className = "conf " + (conf || "").toLowerCase();
+
+        li.appendChild(left);
+        li.appendChild(right);
+        ul.appendChild(li);
+      }
+
+      meta.textContent = `${sorted.length} objektů`;
+      meta2.textContent = data.model ? `Model: ${data.model}` : "";
+
+      copyBtn.disabled = sorted.length === 0;
+    }
+
+    function resetResultsOnly(){
+      captionEl.style.display = "none";
+      chipsEl.style.display = "none";
+      listEl.style.display = "none";
+      empty.style.display = "none";
+      ul.innerHTML = "";
+      meta.textContent = "0 objektů";
+      meta2.textContent = "";
+    }
+
+    function confRank(c){
+      if (!c) return 0;
+      const s = c.toString().toLowerCase();
+      if (s === "high") return 3;
+      if (s === "medium") return 2;
+      if (s === "low") return 1;
+      return 0;
+    }
+
+    function showToast(msg){
+      toast.textContent = msg;
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 1400);
+    }
+
+    function escapeHtml(s){
+      return String(s).replace(/[&<>"']/g, (ch) => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+      }[ch]));
+    }
+
+    // --- Image helpers (always convert to clean JPEG) ---
     async function fileToCleanJpeg(file, maxSide, quality) {
       const img = await fileToImage(file);
 
@@ -74,8 +764,6 @@
       ctx.drawImage(img, 0, 0, w, h);
 
       const blob = await new Promise((resolve) => c.toBlob(resolve, "image/jpeg", quality));
-
-      // ✅ důležité: toBlob může vrátit null
       if (!blob) throw new Error("Nepodařilo se převést obrázek na JPEG (canvas.toBlob returned null).");
 
       const base = (file.name || "photo").replace(/\.[^.]+$/, "");
@@ -86,17 +774,14 @@
       return new Promise((resolve, reject) => {
         const url = URL.createObjectURL(file);
         const img = new Image();
-        img.onload = () => {
-          URL.revokeObjectURL(url);
-          resolve(img);
-        };
-        img.onerror = (err) => {
-          URL.revokeObjectURL(url);
-          reject(err);
-        };
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = (err) => { URL.revokeObjectURL(url); reject(err); };
         img.src = url;
       });
     }
+
+    // Initial
+    resetUI();
   </script>
 </body>
 </html>
