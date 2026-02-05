@@ -29,7 +29,6 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: false, error: "Missing or invalid image file (field 'file')." }, 400);
     }
 
-    // Binding must exist in Pages project (not in a separate Worker)
     if (!env.AI || typeof env.AI.run !== "function") {
       return json(
         {
@@ -41,48 +40,62 @@ export async function onRequestPost({ request, env }) {
       );
     }
 
-    // ✅ RAW bytes for LLaVA (per Cloudflare docs)
     bytes = new Uint8Array(await file.arrayBuffer());
     const image = Array.from(bytes);
 
-    // ✅ Prompt: force real objects (no placeholder examples)
+    // ✅ Debug: hash obrázku (abychom věděli, že se skutečně mění)
+    const sha = await sha256Hex(bytes);
+    const imageFingerprint = sha.slice(0, 12); // zkráceně
+
+    // ✅ Nový prompt: méně biasu, víc reality
     const prompt =
-      "Jsi API pro tagování obrázků. Vrať POUZE platný JSON (žádný markdown, žádné vysvětlení, žádný další text). " +
-      'Výstup MUSÍ být přesně ve formátu: {"objects":[{"name":"...","confidence":"low|medium|high"}]}. ' +
-      "Ale POZOR: v poli objects NESMÍ být žádné placeholdery jako \"...\", \"xxx\", \"object\" ani prázdné názvy. " +
-      "Každý name musí být konkrétní české podstatné jméno (např. \"auto\", \"jeřáb\", \"helma\", \"beton\", \"člověk\"). " +
-      "Zkus najít aspoň 5 objektů; když jich je méně, vrať tolik, kolik opravdu vidíš. " +
-      'Pokud nepoznáš vůbec nic, vrať přesně {"objects":[]}.' +
-      "\n\nDŮLEŽITÉ: Nevracej příklad. Vracej skutečné objekty z obrázku.";
+      "Jsi přesný vizuální analyzátor. Nehádej a nevymýšlej. " +
+      "Pokud si nejsi jistý objektem, NEUVÁDĚJ ho. " +
+      "Nepředpokládej stavbu ani stavební prostředí, pokud to není jasně vidět. " +
+      "Vrať POUZE platný JSON bez markdownu a bez dalšího textu.\n\n" +
+      'Formát: {"caption":"...","objects":[{"name":"...","confidence":"low|medium|high"}]}\n' +
+      "caption = jedna věta česky, co je na fotce. " +
+      "objects = 5–12 konkrétních objektů, pouze to co opravdu vidíš.\n" +
+      "Zakázáno: placeholdery jako \"...\", \"object\", \"xxx\".\n";
 
     const ai = await env.AI.run(MODEL, {
-      image,          // array of ints
-      prompt,         // string prompt
+      image,
+      prompt,
       max_tokens: 512,
     });
 
-    // Cloudflare docs show output like { description: "..." }
     const description =
       ai?.description ??
       ai?.result ??
       ai?.response ??
       (typeof ai === "string" ? ai : "");
 
-    // 1) Try parse JSON from description
     const parsed = tryParseJsonFromText(description);
 
     if (parsed && Array.isArray(parsed.objects)) {
       const cleaned = cleanObjects(parsed.objects);
-      return json({ ok: true, model: MODEL, objects: cleaned, raw: ai });
+      const caption = typeof parsed.caption === "string" ? parsed.caption.trim() : "";
+
+      return json({
+        ok: true,
+        model: MODEL,
+        imageFingerprint,
+        bytesLength: bytes.length,
+        caption,
+        objects: cleaned,
+        raw: ai,
+      });
     }
 
-    // 2) Fallback: extract tags from free text description
-    const fallbackObjects = extractObjectsFromText(description);
+    // fallback, když model nevrátí JSON
     return json({
       ok: true,
       model: MODEL,
-      objects: fallbackObjects,
-      note: "Model returned non-JSON; objects were extracted from text fallback.",
+      imageFingerprint,
+      bytesLength: bytes.length,
+      caption: "",
+      objects: [],
+      note: "Model returned non-JSON output; see description/raw.",
       description,
       raw: ai,
     });
@@ -110,12 +123,10 @@ function tryParseJsonFromText(text) {
   if (!text || typeof text !== "string") return null;
   const s = text.trim();
 
-  // direct parse
   try {
     return JSON.parse(s);
   } catch {}
 
-  // try to find first {...} block
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start >= 0 && end > start) {
@@ -124,13 +135,11 @@ function tryParseJsonFromText(text) {
       return JSON.parse(sub);
     } catch {}
   }
-
   return null;
 }
 
 function cleanObjects(objects) {
   const out = [];
-
   for (const o of objects) {
     if (!o || typeof o !== "object") continue;
 
@@ -138,57 +147,20 @@ function cleanObjects(objects) {
     const confidence = typeof o.confidence === "string" ? o.confidence.trim() : "";
 
     if (!name) continue;
-
     const lower = name.toLowerCase();
     if (name === "..." || lower === "xxx" || lower === "object") continue;
-
     if (!["low", "medium", "high"].includes(confidence)) continue;
 
-    // de-dup by name
     if (out.some(x => x.name.toLowerCase() === lower)) continue;
-
     out.push({ name, confidence });
   }
-
   return out;
 }
 
-// Very simple fallback: turn description into tags.
-// We keep it conservative; you can refine later into a Metrostav dictionary.
-function extractObjectsFromText(text) {
-  if (!text || typeof text !== "string") return [];
-
-  // Split by common separators
-  const raw = text
-    .replace(/\s+/g, " ")
-    .replace(/[•·]/g, ",")
-    .split(/[,;:\n]/)
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  // Keep short-ish noun-like fragments, remove obvious noise
-  const cleaned = [];
-  for (const s of raw) {
-    const t = s
-      .replace(/^[-–—]\s*/, "")
-      .replace(/\.$/, "")
-      .trim();
-
-    if (!t) continue;
-    if (t.length > 40) continue;
-    if (t.toLowerCase().includes("json")) continue;
-    if (t === "..." || t.toLowerCase() === "object") continue;
-
-    cleaned.push(t);
-  }
-
-  // de-dup and map to confidence=low (fallback guess)
-  const uniq = [];
-  for (const t of cleaned) {
-    if (uniq.some(x => x.toLowerCase() === t.toLowerCase())) continue;
-    uniq.push(t);
-  }
-
-  // limit to 15 to stay tidy
-  return uniq.slice(0, 15).map(name => ({ name, confidence: "low" }));
+async function sha256Hex(u8) {
+  // u8 -> ArrayBuffer
+  const buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  const arr = Array.from(new Uint8Array(hash));
+  return arr.map(b => b.toString(16).padStart(2, "0")).join("");
 }
