@@ -1,13 +1,13 @@
 // functions/api/objects.js
 // POST /api/objects
 // multipart/form-data field: "file" (image/*)
+// Uses Workers AI (LLaVA) with raw image bytes (array of 0–255)
 // Returns JSON only.
 
 const MODEL = "@cf/llava-hf/llava-1.5-7b-hf";
 
 export async function onRequestPost({ request, env }) {
   let bytes = null;
-  let dataUrl = null;
 
   try {
     const ct = request.headers.get("content-type") || "";
@@ -18,7 +18,6 @@ export async function onRequestPost({ request, env }) {
     const form = await request.formData();
     const file = form.get("file");
 
-    // ✅ bez File instanceof – ať to nepadá v runtime
     const isImage =
       file &&
       typeof file === "object" &&
@@ -30,7 +29,6 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: false, error: "Missing or invalid image file (field 'file')." }, 400);
     }
 
-    // ✅ binding musí být v Pages projektu: Settings → Functions → Bindings → Workers AI → name AI
     if (!env.AI || typeof env.AI.run !== "function") {
       return json(
         {
@@ -42,36 +40,42 @@ export async function onRequestPost({ request, env }) {
       );
     }
 
+    // ✅ RAW bytes → array of ints 0..255 (what LLaVA expects on Workers AI)
     bytes = new Uint8Array(await file.arrayBuffer());
+    const image = Array.from(bytes);
 
-    // ✅ DŮLEŽITÉ: vynutíme JPEG data URL bez ohledu na file.type
-    // (frontend už posílá čistý JPEG, ale tohle eliminuje edge-casey)
-    dataUrl = `data:image/jpeg;base64,${toBase64(bytes)}`;
-
-    const messages = [
-      {
-        role: "system",
-        content: "You are an image tagging API. Return ONLY valid JSON. No markdown, no explanations.",
-      },
-      {
-        role: "user",
-        content:
-          'Return JSON EXACTLY as {"objects":[{"name":"...","confidence":"low|medium|high"}]}. Use Czech names. Avoid duplicates.',
-      },
-    ];
+    // LLaVA endpoint uses `prompt` (not chat messages) on Workers AI docs. :contentReference[oaicite:1]{index=1}
+    const prompt =
+      'Vrať POUZE platný JSON (bez markdownu a bez vysvětlování) ve tvaru {"objects":[{"name":"...","confidence":"low|medium|high"}]}. ' +
+      "Vyjmenuj objekty na fotce česky. Nedělej duplicity, používej nejběžnější název.";
 
     const ai = await env.AI.run(MODEL, {
-      messages,
-      image: dataUrl,
+      image,        // <-- array of ints
+      prompt,       // <-- prompt string
+      max_tokens: 512,
     });
 
-    const objects = extractObjects(ai);
+    // Podle docs je output typicky { description: "..." } :contentReference[oaicite:2]{index=2}
+    const description =
+      ai?.description ??
+      ai?.result ??
+      ai?.response ??
+      (typeof ai === "string" ? ai : "");
 
+    // Pokus: vytáhnout JSON z description
+    const parsed = tryParseJsonFromText(description);
+
+    if (parsed && Array.isArray(parsed.objects)) {
+      return json({ ok: true, model: MODEL, objects: parsed.objects, raw: ai });
+    }
+
+    // Fallback: vrať aspoň popis (a raw) pro ladění promptu
     return json({
       ok: true,
       model: MODEL,
-      objects,
-      // pro začátek necháme raw (můžeš později vypnout)
+      objects: [],
+      note: "Model returned non-JSON output; see description/raw and we will tighten the prompt.",
+      description,
       raw: ai,
     });
   } catch (e) {
@@ -80,10 +84,7 @@ export async function onRequestPost({ request, env }) {
         ok: false,
         model: MODEL,
         error: String(e),
-        debug: {
-          bytesLength: bytes?.length ?? null,
-          dataUrlPrefix: dataUrl ? dataUrl.slice(0, 30) : null,
-        },
+        debug: { bytesLength: bytes?.length ?? null },
       },
       500
     );
@@ -95,38 +96,6 @@ function json(data, status = 200) {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
-}
-
-function toBase64(u8) {
-  let s = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < u8.length; i += chunk) {
-    s += String.fromCharCode(...u8.subarray(i, i + chunk));
-  }
-  return btoa(s);
-}
-
-// Pokusí se vytáhnout objects[] i když model vrátí text / nested strukturu
-function extractObjects(ai) {
-  // Pokud model vrátí už strukturovaně
-  if (ai && typeof ai === "object" && Array.isArray(ai.objects)) return ai.objects;
-
-  // Kandidátní textová pole
-  const texts = [];
-  if (ai && typeof ai === "object") {
-    for (const k of ["response", "result", "output", "output_text", "text", "content"]) {
-      if (typeof ai[k] === "string") texts.push(ai[k]);
-    }
-  }
-  if (ai?.choices?.[0]?.message?.content) texts.push(ai.choices[0].message.content);
-
-  for (const t of texts) {
-    const parsed = tryParseJsonFromText(t);
-    if (parsed && Array.isArray(parsed.objects)) return parsed.objects;
-  }
-
-  // fallback
-  return [];
 }
 
 function tryParseJsonFromText(text) {
