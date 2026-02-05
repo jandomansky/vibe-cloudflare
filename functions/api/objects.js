@@ -1,30 +1,24 @@
 // functions/api/objects.js
 // POST /api/objects
 // multipart/form-data field: "file" (image/*)
-// Returns JSON: { ok: true, objects: [...] } or { ok:false, error: ... }
+// Returns JSON only.
 
 const MODEL = "@cf/llava-hf/llava-1.5-7b-hf";
 
-
 export async function onRequestPost({ request, env }) {
+  let bytes = null;
+  let dataUrl = null;
+
   try {
-    // 1) Content-Type check
     const ct = request.headers.get("content-type") || "";
     if (!ct.includes("multipart/form-data")) {
-      return json(
-        {
-          ok: false,
-          error: "Send multipart/form-data with field 'file'.",
-        },
-        400
-      );
+      return json({ ok: false, error: "Send multipart/form-data with field 'file'." }, 400);
     }
 
-    // 2) Parse form
     const form = await request.formData();
     const file = form.get("file");
 
-    // 3) Validate file without relying on global File
+    // ✅ bez File instanceof – ať to nepadá v runtime
     const isImage =
       file &&
       typeof file === "object" &&
@@ -33,64 +27,63 @@ export async function onRequestPost({ request, env }) {
       file.type.startsWith("image/");
 
     if (!isImage) {
-      return json(
-        { ok: false, error: "Missing or invalid image file (field 'file')." },
-        400
-      );
+      return json({ ok: false, error: "Missing or invalid image file (field 'file')." }, 400);
     }
 
-    // 4) Ensure Workers AI binding exists (Pages Functions binding must be named "AI")
+    // ✅ binding musí být v Pages projektu: Settings → Functions → Bindings → Workers AI → name AI
     if (!env.AI || typeof env.AI.run !== "function") {
       return json(
         {
           ok: false,
           error:
-            "Workers AI binding 'AI' is missing. Add it in Pages project: Settings → Functions → Bindings → Workers AI, name it AI.",
+            "Workers AI binding 'AI' is missing in Pages project. Add: Pages → Settings → Functions → Bindings → Workers AI, name it AI.",
         },
         500
       );
     }
 
-    // 5) Convert to base64 data URL
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const dataUrl = `data:${file.type};base64,${toBase64(bytes)}`;
+    bytes = new Uint8Array(await file.arrayBuffer());
 
-    // 6) Prompt: force strict JSON output in Czech
+    // ✅ DŮLEŽITÉ: vynutíme JPEG data URL bez ohledu na file.type
+    // (frontend už posílá čistý JPEG, ale tohle eliminuje edge-casey)
+    dataUrl = `data:image/jpeg;base64,${toBase64(bytes)}`;
+
     const messages = [
       {
         role: "system",
-        content:
-          "You are an image tagging API. Return ONLY valid JSON. No markdown, no explanations.",
+        content: "You are an image tagging API. Return ONLY valid JSON. No markdown, no explanations.",
       },
       {
         role: "user",
         content:
-          'Analyze the image and return JSON EXACTLY in this schema: {"objects":[{"name":"...","confidence":"low|medium|high"}]}. Use Czech names for objects. Avoid duplicates; use the most common term.',
+          'Return JSON EXACTLY as {"objects":[{"name":"...","confidence":"low|medium|high"}]}. Use Czech names. Avoid duplicates.',
       },
     ];
 
-    // 7) Call vision model
-    const ai = await env.AI.run(MODEL, { messages, image: dataUrl });
+    const ai = await env.AI.run(MODEL, {
+      messages,
+      image: dataUrl,
+    });
 
-    // 8) Normalize output to a simple {objects:[...]} if possible
-    // Different models can return slightly different shapes; we try to extract JSON.
-    const extracted = extractObjects(ai);
+    const objects = extractObjects(ai);
 
     return json({
       ok: true,
       model: MODEL,
-      objects: extracted.objects,
-      raw: extracted.rawIncluded ? ai : undefined,
+      objects,
+      // pro začátek necháme raw (můžeš později vypnout)
+      raw: ai,
     });
   } catch (e) {
-    // Always return JSON errors (no Cloudflare HTML error page)
     return json(
       {
         ok: false,
         model: MODEL,
         error: String(e),
-        hint:
-          "If you see an 'agree' / EU restriction message, choose a different Workers AI vision model.",
+        debug: {
+          bytesLength: bytes?.length ?? null,
+          dataUrlPrefix: dataUrl ? dataUrl.slice(0, 30) : null,
+        },
       },
       500
     );
@@ -113,55 +106,37 @@ function toBase64(u8) {
   return btoa(s);
 }
 
-/**
- * Best-effort extraction of {"objects":[...]} from model output.
- * Some models return: {response: "..."} or {result: "..."} or {output_text: "..."} etc.
- * We try to parse JSON from any string fields.
- */
+// Pokusí se vytáhnout objects[] i když model vrátí text / nested strukturu
 function extractObjects(ai) {
-  // Default: return empty list and include raw (for debugging)
-  const fallback = { objects: [], rawIncluded: true };
+  // Pokud model vrátí už strukturovaně
+  if (ai && typeof ai === "object" && Array.isArray(ai.objects)) return ai.objects;
 
-  // 1) If it's already the target shape
-  if (ai && typeof ai === "object" && Array.isArray(ai.objects)) {
-    return { objects: ai.objects, rawIncluded: false };
-  }
-
-  // 2) Try common text fields
-  const candidates = [];
+  // Kandidátní textová pole
+  const texts = [];
   if (ai && typeof ai === "object") {
     for (const k of ["response", "result", "output", "output_text", "text", "content"]) {
-      if (typeof ai[k] === "string") candidates.push(ai[k]);
+      if (typeof ai[k] === "string") texts.push(ai[k]);
     }
   }
+  if (ai?.choices?.[0]?.message?.content) texts.push(ai.choices[0].message.content);
 
-  // 3) Some outputs may be nested
-  if (ai && typeof ai === "object" && ai?.choices?.[0]?.message?.content) {
-    candidates.push(ai.choices[0].message.content);
-  }
-
-  for (const t of candidates) {
+  for (const t of texts) {
     const parsed = tryParseJsonFromText(t);
-    if (parsed && Array.isArray(parsed.objects)) {
-      return { objects: parsed.objects, rawIncluded: true };
-    }
+    if (parsed && Array.isArray(parsed.objects)) return parsed.objects;
   }
 
-  return fallback;
+  // fallback
+  return [];
 }
 
 function tryParseJsonFromText(text) {
   if (!text || typeof text !== "string") return null;
-
-  // trim
   const s = text.trim();
 
-  // direct parse
   try {
     return JSON.parse(s);
   } catch {}
 
-  // try to find first {...} block
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start >= 0 && end > start) {
@@ -170,6 +145,5 @@ function tryParseJsonFromText(text) {
       return JSON.parse(sub);
     } catch {}
   }
-
   return null;
 }
