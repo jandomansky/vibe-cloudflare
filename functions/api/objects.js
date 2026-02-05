@@ -48,20 +48,21 @@ export async function onRequestPost({ request, env }) {
     const imageFingerprint = sha.slice(0, 12); // zkráceně
 
     // ✅ Nový prompt: méně biasu, víc reality
-    const prompt =
-      "Jsi přesný vizuální analyzátor. Nehádej a nevymýšlej. " +
-      "Pokud si nejsi jistý objektem, NEUVÁDĚJ ho. " +
-      "Nepředpokládej stavbu ani stavební prostředí, pokud to není jasně vidět. " +
-      "Vrať POUZE platný JSON bez markdownu a bez dalšího textu.\n\n" +
-      'Formát: {"caption":"...","objects":[{"name":"...","confidence":"low|medium|high"}]}\n' +
-      "caption = jedna věta česky, co je na fotce. " +
-      "objects = 5–12 konkrétních objektů, pouze to co opravdu vidíš.\n" +
-      "Zakázáno: placeholdery jako \"...\", \"object\", \"xxx\".\n";
+const prompt =
+  "Jsi velmi pečlivý vizuální analyzátor. Nehádej a nevymýšlej. " +
+  "Vypiš VŠECHNY rozpoznatelné objekty na obrázku (i malé a méně nápadné), pokud si nejsi jistý, označ confidence jako low. " +
+  "Nepředpokládej stavební prostředí, pokud to není jasně vidět. " +
+  "Vrať POUZE platný JSON bez markdownu a bez dalšího textu.\n\n" +
+  'Formát: {"caption":"...","objects":[{"name":"...","confidence":"low|medium|high"}]}\n' +
+  "caption = jedna věta česky, co je na fotce.\n" +
+  "objects = co nejdelší seznam všech objektů, které skutečně vidíš (klidně 30+). " +
+  "Zakázáno: placeholdery jako \"...\", \"object\", \"xxx\".\n";
+
 
     const ai = await env.AI.run(MODEL, {
       image,
       prompt,
-      max_tokens: 512,
+      max_tokens: 1024,
     });
 
     const description =
