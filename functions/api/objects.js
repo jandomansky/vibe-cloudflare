@@ -162,21 +162,31 @@ function tryParseJsonFromText(text) {
   if (!text || typeof text !== "string") return null;
   let s = text.trim();
 
-  try {
-    return JSON.parse(s);
-  } catch {}
+  // Remove ```json ... ``` fences if present
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
-  // extract first {...}
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    const sub = s.slice(start, end + 1);
-    try {
-      return JSON.parse(sub);
-    } catch {}
+  // Try direct parse
+  try { return JSON.parse(s); } catch {}
+
+  // Try extract first { ... } block
+  const iObj = s.indexOf("{");
+  const jObj = s.lastIndexOf("}");
+  if (iObj >= 0 && jObj > iObj) {
+    const candidate = s.slice(iObj, jObj + 1);
+    try { return JSON.parse(candidate); } catch {}
   }
+
+  // Try extract first [ ... ] block (sometimes models return array)
+  const iArr = s.indexOf("[");
+  const jArr = s.lastIndexOf("]");
+  if (iArr >= 0 && jArr > iArr) {
+    const candidate = s.slice(iArr, jArr + 1);
+    try { return JSON.parse(candidate); } catch {}
+  }
+
   return null;
 }
+
 
 function cleanObjects(objects) {
   const out = [];
