@@ -37,11 +37,14 @@
         radial-gradient(800px 500px at 50% 100%, rgba(252,165,165,.10), transparent 60%),
         var(--bg);
     }
+
+    /* původní layout wrapper */
     .wrap{
       max-width: 1050px;
       margin: 0 auto;
-      padding: 32px 18px 46px;
+      padding: 28px 18px 46px;
     }
+
     .topbar{
       display:flex;
       align-items:flex-start;
@@ -49,9 +52,32 @@
       gap:16px;
       margin-bottom: 18px;
     }
+
     .brand{
-      display:flex; flex-direction:column; gap:6px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      min-width:0;
     }
+
+    /* logo vlevo a zarovnané s obsahem */
+    .brand-header{
+      display:flex;
+      align-items:center;
+      justify-content:flex-start;
+      gap:12px;
+    }
+    .brand-logo{
+      max-height: 44px;
+      width: auto;
+      display:block;
+      border-radius: 8px;
+      background: rgba(255,255,255,.92);
+      padding: 8px 10px;
+      box-shadow: 0 12px 28px rgba(0,0,0,.28);
+      border: 1px solid rgba(255,255,255,.10);
+    }
+
     .title{
       font-size: 28px;
       line-height: 1.15;
@@ -63,7 +89,9 @@
       color:var(--muted);
       font-size: 14px;
       line-height: 1.4;
+      max-width: 72ch;
     }
+
     .badge{
       display:inline-flex;
       align-items:center;
@@ -76,6 +104,7 @@
       color: var(--muted);
       font-size: 13px;
       white-space: nowrap;
+      user-select:none;
     }
     .dot{
       width:10px; height:10px;
@@ -83,6 +112,7 @@
       background: rgba(255,255,255,.35);
       box-shadow: 0 0 0 4px rgba(255,255,255,.08);
     }
+
     .grid{
       display:grid;
       grid-template-columns: 1.05fr .95fr;
@@ -92,6 +122,7 @@
     @media (max-width: 920px){
       .grid{grid-template-columns:1fr; }
       .badge{display:none;}
+      .brand-logo{ max-height: 40px; }
     }
 
     .card{
@@ -164,6 +195,7 @@
       white-space: nowrap;
       max-width: 520px;
     }
+
     .controls{
       display:flex;
       flex-wrap:wrap;
@@ -196,17 +228,12 @@
       background: rgba(125,211,252,.24);
       border-color: rgba(125,211,252,.48);
     }
-    .btn.ghost{
-      background: transparent;
-    }
+    .btn.ghost{ background: transparent; }
     .btn:disabled{
       opacity: .55;
       cursor: not-allowed;
     }
-
-    .file{
-      display:none;
-    }
+    .file{ display:none; }
 
     .status{
       display:flex;
@@ -374,42 +401,24 @@
       line-height: 1.5;
     }
 
-.container {
-  max-width: 1100px;     /* nebo co máš */
-  margin: 0 auto;
-  padding: 0 24px;       /* stejné jako karty */
-}
-
-.brand-header {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  padding: 20px 0 10px;  /* už bez bočních paddingů */
-}
-
-.brand-logo {
-  max-height: 48px;
-  width: auto;
-  display: block;
-}
     a{ color: var(--accent); text-decoration:none; }
     a:hover{ text-decoration:underline; }
   </style>
 </head>
 
 <body>
-<div class="page">
-  <div class="container">
-    <header class="brand-header">
-      <img src="/assets/metrostav-logo.jpg" alt="Metrostav" class="brand-logo" />
-    </header>
+  <div class="wrap">
 
-    <h1>Metrostav fotoarchiv – nástroj pro tagování fotek</h1>
-    <p class="subtitle">Nahraj fotku a AI vypíše rozpoznané objekty.</p>
+    <div class="topbar">
+      <div class="brand">
+        <header class="brand-header">
+          <img src="/assets/metrostav-logo.jpg" alt="Metrostav" class="brand-logo" />
+        </header>
 
-    <!-- tady už máš grid/karty -->
-  </div>
-</div>
+        <h1 class="title">Metrostav fotoarchiv – nástroj pro tagování fotek</h1>
+        <p class="subtitle">Nahraj fotku a AI vypíše rozpoznané objekty.</p>
+      </div>
+
       <div class="badge" title="Běží na Cloudflare Pages + Functions (Workers AI)">
         <span class="dot" id="dot"></span>
         <span id="badgeText">Připraveno</span>
@@ -497,6 +506,7 @@
         </div>
       </div>
     </div>
+
   </div>
 
   <div class="toast" id="toast">Zkopírováno</div>
@@ -568,12 +578,12 @@
         const fd = new FormData();
         fd.append("file", resized, resized.name);
 
-const r = await fetch(API_URL, {
-  method: "POST",
-  body: fd,
-  cache: "no-store",
-  headers: { "cache-control": "no-store" }
-});
+        const r = await fetch(API_URL, {
+          method: "POST",
+          body: fd,
+          cache: "no-store",
+          headers: { "cache-control": "no-store" }
+        });
 
         const text = await r.text();
 
@@ -669,7 +679,6 @@ const r = await fetch(API_URL, {
     }
 
     function setHealth(state){
-      // badge dot colors without adding CSS vars (simple)
       if (state === "ok") {
         dot.style.background = "rgba(134,239,172,.95)";
         badgeText.textContent = "Hotovo";
@@ -683,11 +692,9 @@ const r = await fetch(API_URL, {
     }
 
     function renderError(data){
-      // Show a friendly message (not a code block)
       resetResultsOnly();
       empty.style.display = "block";
       empty.textContent = (data && data.error) ? String(data.error) : "Něco se pokazilo.";
-      // enable copy only when we have objects
       copyBtn.disabled = true;
     }
 
@@ -697,7 +704,6 @@ const r = await fetch(API_URL, {
       lastCaption = (data.caption || "").toString().trim();
       lastObjects = Array.isArray(data.objects) ? data.objects : [];
 
-      // caption
       if (lastCaption) {
         captionEl.textContent = lastCaption;
         captionEl.style.display = "block";
@@ -705,7 +711,6 @@ const r = await fetch(API_URL, {
         captionEl.style.display = "none";
       }
 
-      // chips (top 8)
       if (lastObjects.length) {
         chipsEl.innerHTML = "";
         chipsEl.style.display = "flex";
@@ -721,7 +726,6 @@ const r = await fetch(API_URL, {
         chipsEl.style.display = "none";
       }
 
-      // list
       listEl.style.display = "block";
       empty.style.display = "none";
       ul.innerHTML = "";
