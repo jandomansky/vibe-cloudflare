@@ -3,7 +3,8 @@
 // multipart/form-data field: "file" (image/*)
 // Returns JSON: { ok: true, objects: [...] } or { ok:false, error: ... }
 
-const MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"; // ⚠️ tenhle u tebe hlásí EU/agree omezení – později vyměň
+const MODEL = "@cf/llava-hf/llava-1.5-7b-hf";
+
 
 export async function onRequestPost({ request, env }) {
   try {
