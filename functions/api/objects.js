@@ -1,7 +1,7 @@
 // functions/api/objects.js
 // POST /api/objects
 // multipart/form-data field: "file" (image/*)
-// Uses Workers AI (LLaVA) with raw image bytes (array of 0–255)
+// Workers AI (LLaVA) expects raw image bytes as an array of ints (0..255).
 // Returns JSON only.
 
 const MODEL = "@cf/llava-hf/llava-1.5-7b-hf";
@@ -43,26 +43,33 @@ export async function onRequestPost({ request, env }) {
     bytes = new Uint8Array(await file.arrayBuffer());
     const image = Array.from(bytes);
 
-    // ✅ Debug: hash obrázku (abychom věděli, že se skutečně mění)
-    const sha = await sha256Hex(bytes);
-    const imageFingerprint = sha.slice(0, 12); // zkráceně
+    // Debug: fingerprint to ensure different images are actually sent
+    const imageFingerprint = (await sha256Hex(bytes)).slice(0, 12);
 
-    // ✅ Nový prompt: méně biasu, víc reality
-const prompt =
-  "Jsi velmi pečlivý vizuální analyzátor. Nehádej a nevymýšlej. " +
-  "Vypiš VŠECHNY rozpoznatelné objekty na obrázku (i malé a méně nápadné), pokud si nejsi jistý, označ confidence jako low. " +
-  "Nepředpokládej stavební prostředí, pokud to není jasně vidět. " +
-  "Vrať POUZE platný JSON bez markdownu a bez dalšího textu.\n\n" +
-  'Formát: {"caption":"...","objects":[{"name":"...","confidence":"low|medium|high"}]}\n' +
-  "caption = jedna věta česky, co je na fotce.\n" +
-  "objects = co nejdelší seznam všech objektů, které skutečně vidíš (klidně 30+). " +
-  "Zakázáno: placeholdery jako \"...\", \"object\", \"xxx\".\n";
-
+    // ✅ Prompt tuned for "ALL objects" behavior
+    // - Avoid guessing / hallucinating
+    // - Return as many objects as possible (30+ if present)
+    // - Use low confidence for uncertain detections
+    // - Strict JSON only
+    const prompt =
+      "Jsi velmi pečlivé API pro analýzu obrázků. Vracej jen to, co je skutečně vidět (nehádej kontext). " +
+      "Tvým cílem je vypsat CO NEJVÍCE rozpoznatelných objektů – i malé a méně nápadné (klidně 30+). " +
+      "Pokud si nejsi jistý, objekt uveď, ale nastav confidence na low. " +
+      "Nepředpokládej stavební prostředí, pokud není jasně na fotce. " +
+      "Vrať POUZE platný JSON bez markdownu a bez jakéhokoli dalšího textu.\n\n" +
+      "Přesný formát výstupu:\n" +
+      '{"caption":"jedna věta česky","objects":[{"name":"konkrétní český název","confidence":"low|medium|high"}]}\n\n' +
+      "Pravidla:\n" +
+      "- name musí být konkrétní české podstatné jméno (např. auto, člověk, strom, okno, helma, telefon).\n" +
+      '- Zakázáno: placeholdery typu "...", "object", "xxx" a prázdné názvy.\n' +
+      "- Nedělej duplicity (jeden objekt jen jednou, nejběžnějším názvem).\n" +
+      "- Vynech velmi abstraktní slova (např. 'scéna', 'prostředí').\n";
 
     const ai = await env.AI.run(MODEL, {
       image,
       prompt,
-      max_tokens: 1024,
+      // víc prostoru pro dlouhý seznam objektů
+      max_tokens: 1400,
     });
 
     const description =
@@ -74,29 +81,28 @@ const prompt =
     const parsed = tryParseJsonFromText(description);
 
     if (parsed && Array.isArray(parsed.objects)) {
-      const cleaned = cleanObjects(parsed.objects);
       const caption = typeof parsed.caption === "string" ? parsed.caption.trim() : "";
+      const cleaned = cleanObjects(parsed.objects);
 
       return json({
         ok: true,
         model: MODEL,
         imageFingerprint,
-        bytesLength: bytes.length,
         caption,
         objects: cleaned,
+        // raw nechávám kvůli ladění; později můžeš odstranit
         raw: ai,
       });
     }
 
-    // fallback, když model nevrátí JSON
+    // fallback (když model vrátí ne-JSON)
     return json({
       ok: true,
       model: MODEL,
       imageFingerprint,
-      bytesLength: bytes.length,
       caption: "",
-      objects: [],
-      note: "Model returned non-JSON output; see description/raw.",
+      objects: extractObjectsFromText(description),
+      note: "Model returned non-JSON; objects were extracted from text fallback.",
       description,
       raw: ai,
     });
@@ -141,25 +147,69 @@ function tryParseJsonFromText(text) {
 
 function cleanObjects(objects) {
   const out = [];
+
   for (const o of objects) {
     if (!o || typeof o !== "object") continue;
 
-    const name = typeof o.name === "string" ? o.name.trim() : "";
-    const confidence = typeof o.confidence === "string" ? o.confidence.trim() : "";
+    let name = typeof o.name === "string" ? o.name.trim() : "";
+    let confidence = typeof o.confidence === "string" ? o.confidence.trim() : "";
 
     if (!name) continue;
+
+    // forbid placeholders
     const lower = name.toLowerCase();
     if (name === "..." || lower === "xxx" || lower === "object") continue;
-    if (!["low", "medium", "high"].includes(confidence)) continue;
 
+    // normalize confidence
+    confidence = confidence.toLowerCase();
+    if (!["low", "medium", "high"].includes(confidence)) {
+      // pokud model vrátí něco jiného, odhadni low
+      confidence = "low";
+    }
+
+    // remove too abstract / useless terms
+    if (["scéna", "prostředí", "pozadí", "situace"].includes(lower)) continue;
+
+    // de-dup by name (case-insensitive)
     if (out.some(x => x.name.toLowerCase() === lower)) continue;
+
     out.push({ name, confidence });
   }
+
   return out;
 }
 
+// Simple fallback extraction (keeps it conservative)
+function extractObjectsFromText(text) {
+  if (!text || typeof text !== "string") return [];
+
+  const raw = text
+    .replace(/\s+/g, " ")
+    .replace(/[•·]/g, ",")
+    .split(/[,;:\n]/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const cleaned = [];
+  for (const s of raw) {
+    const t = s.replace(/^[-–—]\s*/, "").replace(/\.$/, "").trim();
+    if (!t) continue;
+    if (t.length > 40) continue;
+    if (t.toLowerCase().includes("json")) continue;
+    if (t === "..." || t.toLowerCase() === "object") continue;
+    cleaned.push(t);
+  }
+
+  const uniq = [];
+  for (const t of cleaned) {
+    if (uniq.some(x => x.toLowerCase() === t.toLowerCase())) continue;
+    uniq.push(t);
+  }
+
+  return uniq.slice(0, 40).map(name => ({ name, confidence: "low" }));
+}
+
 async function sha256Hex(u8) {
-  // u8 -> ArrayBuffer
   const buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
   const hash = await crypto.subtle.digest("SHA-256", buf);
   const arr = Array.from(new Uint8Array(hash));
