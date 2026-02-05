@@ -2,7 +2,7 @@
 // POST /api/objects
 // multipart/form-data field: "file" (image/*)
 //
-// Two-phase approach:
+// Two-phase approach (both phases include image for Cloudflare LLaVA schema):
 // 1) Make a detailed, systematic inventory description (no JSON).
 // 2) Convert that inventory into strict JSON: { caption, objects:[{name,confidence}] }.
 //
@@ -66,14 +66,14 @@ export async function onRequestPost({ request, env }) {
       "   - Značení, bariéry, kužely, pásky\n\n" +
       "Výstup:\n" +
       "- Vrať pouze čistý text.\n" +
-      "- Napiš krátký nadpis 'INVENTURA' a pak odrážky.\n" +
+      "- Začni řádkem 'INVENTURA:' a pak odrážky.\n" +
       "- Buď konkrétní: např. 'sklápěč', 'dodávka', 'kontejner', 'paleta', 'armatura', 'hadice', 'kabely', 'svodidlo', 'zábradlí', 'betonový pilíř', atd.\n" +
       "- Když si nejsi jistý, napiš '(nejisté)'.\n";
 
     const phase1 = await env.AI.run(MODEL, {
       image,
       prompt: PROMPT_1,
-      max_tokens: 1200,
+      max_tokens: 1400,
     });
 
     const inventoryText =
@@ -94,6 +94,7 @@ export async function onRequestPost({ request, env }) {
 
     // -------------------------
     // Phase 2: Convert inventory -> strict JSON objects
+    // (Must include image for this model on Cloudflare)
     // -------------------------
     const PROMPT_2 =
       "Z následující INVENTURY vytvoř čistý JSON ve formátu:\n" +
@@ -107,7 +108,7 @@ export async function onRequestPost({ request, env }) {
       "- name = krátký konkrétní český název objektu (podstatné jméno).\n" +
       "- confidence:\n" +
       "   high = přímo v inventuře bez nejistoty\n" +
-      "   medium = v inventuře, ale mírně neurčité\n" +
+      "   medium = v inventuře, ale neurčité\n" +
       "   low = inventura ho uvádí jako (nejisté)\n" +
       "- NESMÍŠ vracet šablonové texty typu 'konkrétní český název'.\n" +
       "- Vrať POUZE platný JSON. Žádný další text.\n\n" +
@@ -115,10 +116,9 @@ export async function onRequestPost({ request, env }) {
       inventoryText;
 
     const phase2 = await env.AI.run(MODEL, {
-      // Phase 2 is text-only; still using the model, but no image needed
-      // Some providers ignore extra fields; keep request minimal:
+      image, // ✅ required by this model schema on Cloudflare
       prompt: PROMPT_2,
-      max_tokens: 1200,
+      max_tokens: 1400,
     });
 
     const phase2Text =
@@ -143,7 +143,6 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    // If phase2 failed, return debug (still ok=false)
     return json(
       {
         ok: false,
@@ -181,24 +180,15 @@ function json(data, status = 200) {
   });
 }
 
-/**
- * Robust JSON parse:
- * - direct JSON
- * - JSON wrapped in quotes (double parse)
- * - escaped JSON
- * - extraction of first {...} block
- */
 function tryParseJsonFromText(text) {
   if (!text || typeof text !== "string") return null;
 
   let s = text.trim();
 
-  // 1) direct parse
   try {
     return JSON.parse(s);
   } catch {}
 
-  // 2) JSON string wrapped in quotes -> parse twice
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
     try {
       const inner = JSON.parse(s);
@@ -209,7 +199,6 @@ function tryParseJsonFromText(text) {
     } catch {}
   }
 
-  // 3) escaped JSON without outer quotes
   if (s.includes('\\"') || s.includes('{\\"') || s.includes('\\"objects\\"')) {
     const unescaped = s
       .replace(/\\r\\n/g, "\n")
@@ -224,7 +213,6 @@ function tryParseJsonFromText(text) {
     } catch {}
   }
 
-  // 4) extract first {...}
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start >= 0 && end > start) {
@@ -252,7 +240,6 @@ function tryParseJsonFromText(text) {
 function cleanObjects(objects) {
   const out = [];
 
-  // hard blacklist for non-physical / relationship / scene words (Metrostav use-case)
   const banned = new Set([
     "máma",
     "mama",
@@ -283,7 +270,6 @@ function cleanObjects(objects) {
 
     const lower = name.toLowerCase();
 
-    // filter prompt/instruction echoes
     const instructionJunk = [
       "konkrétní český název",
       "konkretni cesky nazev",
@@ -297,14 +283,11 @@ function cleanObjects(objects) {
     if (name === "..." || lower === "xxx" || lower === "object") continue;
     if (banned.has(lower)) continue;
 
-    // remove too abstract / useless terms
     if (["scéna", "prostředí", "pozadí", "situace"].includes(lower)) continue;
 
-    // normalize confidence
     confidence = confidence.toLowerCase();
     if (!["low", "medium", "high"].includes(confidence)) confidence = "low";
 
-    // de-dup by name
     if (out.some((x) => x.name.toLowerCase() === lower)) continue;
 
     out.push({ name, confidence });
