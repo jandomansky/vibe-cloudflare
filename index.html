@@ -429,7 +429,7 @@
                   <span id="status">Vyber fotku a klikni na „Analyzovat“.</span>
                 </div>
                 <p class="hint">
-                  Tip: Fotku před odesláním automaticky převedu na čistý JPEG a zmenším na max 1600 px.
+                  Tip: Fotku před odesláním automaticky převedu na čistý JPEG a zmenším na max 3000 px.
                 </p>
               </div>
             </div>
@@ -537,7 +537,7 @@
 
       try {
         // Always convert to clean JPEG for compatibility
-        const resized = await fileToCleanJpeg(lastFile, 1600, 0.85);
+        const resized = await fileToCleanJpeg(lastFile, 3000, 0.9);
 
         setBusy(true, "AI analyzuje…");
         const fd = new FormData();
