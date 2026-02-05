@@ -51,19 +51,20 @@ export async function onRequestPost({ request, env }) {
     // - Return as many objects as possible (30+ if present)
     // - Use low confidence for uncertain detections
     // - Strict JSON only
-    const prompt =
-      "Jsi velmi pečlivé API pro analýzu obrázků. Vracej jen to, co je skutečně vidět (nehádej kontext). " +
-      "Tvým cílem je vypsat CO NEJVÍCE rozpoznatelných objektů – i malé a méně nápadné (klidně 30+). " +
-      "Pokud si nejsi jistý, objekt uveď, ale nastav confidence na low. " +
-      "Nepředpokládej stavební prostředí, pokud není jasně na fotce. " +
-      "Vrať POUZE platný JSON bez markdownu a bez jakéhokoli dalšího textu.\n\n" +
-      "Přesný formát výstupu:\n" +
-      '{"caption":"jedna věta česky","objects":[{"name":"konkrétní český název","confidence":"low|medium|high"}]}\n\n' +
-      "Pravidla:\n" +
-      "- name musí být konkrétní české podstatné jméno (např. auto, člověk, strom, okno, helma, telefon).\n" +
-      '- Zakázáno: placeholdery typu "...", "object", "xxx" a prázdné názvy.\n' +
-      "- Nedělej duplicity (jeden objekt jen jednou, nejběžnějším názvem).\n" +
-      "- Vynech velmi abstraktní slova (např. 'scéna', 'prostředí').\n";
+const prompt =
+  "Vrať pouze čistý JSON. Žádný markdown, žádné vysvětlení.\n" +
+  "Úkol: Najdi a vypiš VŠECHNY viditelné FYZICKÉ objekty na obrázku (věci/předměty). " +
+  "Nevymýšlej role ani vztahy (ne 'máma', ne 'děti'). Použij obecně 'člověk' nebo 'osoba'. " +
+  "Nevymýšlej místa/scény (ne 'pláž').\n\n" +
+  "JSON formát:\n" +
+  "{\"caption\":\"...\",\"objects\":[{\"name\":\"...\",\"confidence\":\"low|medium|high\"}]}\n\n" +
+  "Pravidla:\n" +
+  "- caption = 1 faktická věta česky, co je vidět.\n" +
+  "- objects = co nejdelší seznam objektů (klidně 30+), bez duplicit.\n" +
+  "- name musí být krátký konkrétní český název objektu (např. jeřáb, bagr, náklaďák, helma, reflexní vesta, beton, bednění, armatura, paleta, cihla, kolečko).\n" +
+  "- Pokud si nejsi jistý, dej confidence=low.\n" +
+  "- NESMÍŠ vracet šablonové texty typu 'konkrétní český název'. Vrať skutečné objekty z fotky.\n";
+
 
     const ai = await env.AI.run(MODEL, {
       image,
