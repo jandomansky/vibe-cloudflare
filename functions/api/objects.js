@@ -208,6 +208,17 @@ function cleanObjects(objects) {
     const lower = name.toLowerCase();
     if (name === "..." || lower === "xxx" || lower === "object") continue;
 
+    // Filter out prompt/instruction echoes
+const instructionJunk = [
+  "konkrétní český název",
+  "konkretni cesky nazev",
+  "český název",
+  "cesky nazev",
+  "název objektu",
+  "nazev objektu"
+];
+if (instructionJunk.some(x => lower.includes(x))) continue;
+    
     // normalize confidence
     confidence = confidence.toLowerCase();
     if (!["low", "medium", "high"].includes(confidence)) {
