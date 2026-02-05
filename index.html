@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Metrostav Vision – Tagování fotek</title>
+  <title>Metrostav fotoarchiv – nástroj pro tagování fotek</title>
   <meta name="description" content="Nahraj fotku a získej seznam rozpoznaných objektů pomocí AI." />
 
   <style>
@@ -543,7 +543,12 @@
         const fd = new FormData();
         fd.append("file", resized, resized.name);
 
-        const r = await fetch(API_URL, { method: "POST", body: fd });
+        const r = await fetch(API_URL, {
+  method: "POST",
+  body: fd,
+  cache: "no-store"
+});
+
         const text = await r.text();
 
         let data;
