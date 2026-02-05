@@ -1,19 +1,10 @@
-// functions/api/objects.js
-// POST /api/objects
-// multipart/form-data field: "file" (image/*)
-//
-// Two-phase approach (both phases include image for Cloudflare LLaVA schema):
-// 1) Make a detailed, systematic inventory description (no JSON).
-// 2) Convert that inventory into strict JSON: { caption, objects:[{name,confidence}] }.
-//
-// Workers AI (LLaVA) expects raw image bytes as an array of ints (0..255).
-
 const MODEL = "@cf/llava-hf/llava-1.5-7b-hf";
 
 export async function onRequestPost({ request, env }) {
-  let bytes = null;
+  let bytes;
 
   try {
+    // 1) Validate
     const ct = request.headers.get("content-type") || "";
     if (!ct.includes("multipart/form-data")) {
       return json({ ok: false, error: "Send multipart/form-data with field 'file'." }, 400);
@@ -45,11 +36,22 @@ export async function onRequestPost({ request, env }) {
     }
 
     bytes = new Uint8Array(await file.arrayBuffer());
-    const image = Array.from(bytes);
+    const image = Array.from(bytes); // Cloudflare expects array of u8
     const imageFingerprint = (await sha256Hex(bytes)).slice(0, 12);
 
+    // Helper: ALWAYS send object with image+prompt (fixes your error 5006)
+    const runVision = async (prompt) => {
+      // Defensive check: prompt must be string
+      if (typeof prompt !== "string") throw new Error("Internal: prompt is not a string");
+      return await env.AI.run(MODEL, {
+        image,
+        prompt,
+        max_tokens: 1400,
+      });
+    };
+
     // -------------------------
-    // Phase 1: Detailed inventory (NO JSON)
+    // Phase 1: Inventory (text only)
     // -------------------------
     const PROMPT_1 =
       "Jsi pečlivý analytik obrázků. Udělej detailní INVENTURU toho, co je VIDĚT na fotce. " +
@@ -67,34 +69,23 @@ export async function onRequestPost({ request, env }) {
       "Výstup:\n" +
       "- Vrať pouze čistý text.\n" +
       "- Začni řádkem 'INVENTURA:' a pak odrážky.\n" +
-      "- Buď konkrétní: např. 'sklápěč', 'dodávka', 'kontejner', 'paleta', 'armatura', 'hadice', 'kabely', 'svodidlo', 'zábradlí', 'betonový pilíř', atd.\n" +
+      "- Buď konkrétní (sklápěč, dodávka, kontejner, paleta, armatura, hadice, kabely, svodidlo, zábradlí...).\n" +
       "- Když si nejsi jistý, napiš '(nejisté)'.\n";
 
-    const phase1 = await env.AI.run(MODEL, {
-      image,
-      prompt: PROMPT_1,
-      max_tokens: 1400,
-    });
+    const phase1 = await runVision(PROMPT_1);
 
     const inventoryText =
       (typeof phase1 === "string" ? phase1 : phase1?.description ?? phase1?.result ?? "")?.trim() || "";
 
     if (!inventoryText) {
       return json(
-        {
-          ok: false,
-          model: MODEL,
-          error: "Phase 1 returned empty inventory text.",
-          imageFingerprint,
-          raw1: phase1,
-        },
+        { ok: false, model: MODEL, error: "Phase 1 returned empty text.", imageFingerprint, raw1: phase1 },
         500
       );
     }
 
     // -------------------------
-    // Phase 2: Convert inventory -> strict JSON objects
-    // (Must include image for this model on Cloudflare)
+    // Phase 2: Inventory -> strict JSON
     // -------------------------
     const PROMPT_2 =
       "Z následující INVENTURY vytvoř čistý JSON ve formátu:\n" +
@@ -104,58 +95,45 @@ export async function onRequestPost({ request, env }) {
       "- NEVYMÝŠLEJ nic, co není v inventuře.\n" +
       "- Žádné role a vztahy: místo 'máma/děti' vždy jen 'člověk' nebo 'osoba'.\n" +
       "- Žádné scénické pojmy jako 'pláž', 'dovolená'.\n" +
-      "- Deduplikuj: každý objekt jen jednou (nejběžnější český název).\n" +
-      "- name = krátký konkrétní český název objektu (podstatné jméno).\n" +
-      "- confidence:\n" +
-      "   high = přímo v inventuře bez nejistoty\n" +
-      "   medium = v inventuře, ale neurčité\n" +
-      "   low = inventura ho uvádí jako (nejisté)\n" +
+      "- Deduplikuj: každý objekt jen jednou.\n" +
+      "- name = krátký konkrétní český název objektu.\n" +
+      "- confidence: high/medium/low podle jistoty (nejisté -> low).\n" +
       "- NESMÍŠ vracet šablonové texty typu 'konkrétní český název'.\n" +
       "- Vrať POUZE platný JSON. Žádný další text.\n\n" +
       "INVENTURA:\n" +
       inventoryText;
 
-    const phase2 = await env.AI.run(MODEL, {
-      image, // ✅ required by this model schema on Cloudflare
-      prompt: PROMPT_2,
-      max_tokens: 1400,
-    });
+    const phase2 = await runVision(PROMPT_2);
 
     const phase2Text =
       (typeof phase2 === "string" ? phase2 : phase2?.description ?? phase2?.result ?? "")?.trim() || "";
 
     const parsed = tryParseJsonFromText(phase2Text);
 
-    if (parsed && Array.isArray(parsed.objects)) {
-      const caption = typeof parsed.caption === "string" ? parsed.caption.trim() : "";
-      const cleaned = cleanObjects(parsed.objects);
-
-      return json({
-        ok: true,
-        model: MODEL,
-        imageFingerprint,
-        caption,
-        objects: cleaned,
-        raw: {
-          phase1: inventoryText,
-          phase2: phase2Text,
+    if (!parsed || !Array.isArray(parsed.objects)) {
+      return json(
+        {
+          ok: false,
+          model: MODEL,
+          imageFingerprint,
+          error: "Phase 2 did not return valid JSON.",
+          raw: { phase1: inventoryText, phase2: phase2Text },
         },
-      });
+        500
+      );
     }
 
-    return json(
-      {
-        ok: false,
-        model: MODEL,
-        imageFingerprint,
-        error: "Phase 2 did not return valid JSON.",
-        raw: {
-          phase1: inventoryText,
-          phase2: phase2Text,
-        },
-      },
-      500
-    );
+    const caption = typeof parsed.caption === "string" ? parsed.caption.trim() : "";
+    const objects = cleanObjects(parsed.objects);
+
+    return json({
+      ok: true,
+      model: MODEL,
+      imageFingerprint,
+      caption,
+      objects,
+      raw: { phase1: inventoryText, phase2: phase2Text },
+    });
   } catch (e) {
     return json(
       {
@@ -175,44 +153,20 @@ function json(data, status = 200) {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
-      "pragma": "no-cache",
+      pragma: "no-cache",
     },
   });
 }
 
 function tryParseJsonFromText(text) {
   if (!text || typeof text !== "string") return null;
-
   let s = text.trim();
 
   try {
     return JSON.parse(s);
   } catch {}
 
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-    try {
-      const inner = JSON.parse(s);
-      if (typeof inner === "string") {
-        const r = tryParseJsonFromText(inner);
-        if (r) return r;
-      }
-    } catch {}
-  }
-
-  if (s.includes('\\"') || s.includes('{\\"') || s.includes('\\"objects\\"')) {
-    const unescaped = s
-      .replace(/\\r\\n/g, "\n")
-      .replace(/\\n/g, "\n")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\'/g, "'")
-      .replace(/\\\\/g, "\\");
-
-    try {
-      return JSON.parse(unescaped);
-    } catch {}
-  }
-
+  // extract first {...}
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start >= 0 && end > start) {
@@ -220,26 +174,12 @@ function tryParseJsonFromText(text) {
     try {
       return JSON.parse(sub);
     } catch {}
-
-    const unescapedSub = sub
-      .replace(/\\r\\n/g, "\n")
-      .replace(/\\n/g, "\n")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\'/g, "'")
-      .replace(/\\\\/g, "\\");
-
-    try {
-      return JSON.parse(unescapedSub);
-    } catch {}
   }
-
   return null;
 }
 
 function cleanObjects(objects) {
   const out = [];
-
   const banned = new Set([
     "máma",
     "mama",
@@ -264,35 +204,25 @@ function cleanObjects(objects) {
     if (!o || typeof o !== "object") continue;
 
     let name = typeof o.name === "string" ? o.name.trim() : "";
-    let confidence = typeof o.confidence === "string" ? o.confidence.trim() : "";
-
+    let confidence = typeof o.confidence === "string" ? o.confidence.trim().toLowerCase() : "low";
     if (!name) continue;
 
     const lower = name.toLowerCase();
 
-    const instructionJunk = [
-      "konkrétní český název",
-      "konkretni cesky nazev",
-      "český název",
-      "cesky nazev",
-      "název objektu",
-      "nazev objektu",
-    ];
-    if (instructionJunk.some((x) => lower.includes(x))) continue;
+    // filter instruction echoes
+    const junk = ["konkrétní český název", "konkretni cesky nazev", "český název", "cesky nazev", "název objektu", "nazev objektu"];
+    if (junk.some((x) => lower.includes(x))) continue;
 
     if (name === "..." || lower === "xxx" || lower === "object") continue;
     if (banned.has(lower)) continue;
 
-    if (["scéna", "prostředí", "pozadí", "situace"].includes(lower)) continue;
-
-    confidence = confidence.toLowerCase();
     if (!["low", "medium", "high"].includes(confidence)) confidence = "low";
 
+    // de-dup
     if (out.some((x) => x.name.toLowerCase() === lower)) continue;
 
     out.push({ name, confidence });
   }
-
   return out;
 }
 
