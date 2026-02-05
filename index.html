@@ -543,10 +543,11 @@
         const fd = new FormData();
         fd.append("file", resized, resized.name);
 
-        const r = await fetch(API_URL, {
+const r = await fetch(API_URL, {
   method: "POST",
   body: fd,
-  cache: "no-store"
+  cache: "no-store",
+  headers: { "cache-control": "no-store" }
 });
 
         const text = await r.text();
