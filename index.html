@@ -374,19 +374,23 @@
       line-height: 1.5;
     }
 
-    .brand-header {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 24px 0 8px;
-}
-    .brand-logo {
-  max-height: 100px;
-  width: auto;
-}
-    .container {
-  max-width: 1200px;
+.container {
+  max-width: 1100px;     /* nebo co máš */
   margin: 0 auto;
+  padding: 0 24px;       /* stejné jako karty */
+}
+
+.brand-header {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 20px 0 10px;  /* už bez bočních paddingů */
+}
+
+.brand-logo {
+  max-height: 48px;
+  width: auto;
+  display: block;
 }
     a{ color: var(--accent); text-decoration:none; }
     a:hover{ text-decoration:underline; }
