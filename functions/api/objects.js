@@ -128,20 +128,67 @@ function json(data, status = 200) {
 
 function tryParseJsonFromText(text) {
   if (!text || typeof text !== "string") return null;
-  const s = text.trim();
 
+  let s = text.trim();
+
+  // 1) direct parse (ideal case)
   try {
     return JSON.parse(s);
   } catch {}
 
+  // 2) If it's a JSON string (wrapped in quotes), parse twice
+  //    e.g. "\"{\\\"objects\\\":[...] }\""
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    try {
+      const inner = JSON.parse(s); // now inner should be a string like {\"objects\":...}
+      if (typeof inner === "string") {
+        const r = tryParseJsonFromText(inner);
+        if (r) return r;
+      }
+    } catch {}
+  }
+
+  // 3) If it looks like escaped JSON without outer quotes: {\"objects\":[...]}
+  //    Unescape common sequences and try again.
+  if (s.includes('\\"') || s.includes('\\"') || s.includes('{\\"') || s.includes('\\"objects\\"') || s.includes('\\"caption\\"') || s.includes('\\"name\\"') || s.includes('\\"confidence\\"') || s.includes('\\"')) {
+    const unescaped = s
+      .replace(/\\r\\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'")
+      .replace(/\\\\/g, "\\");
+
+    try {
+      return JSON.parse(unescaped);
+    } catch {}
+  }
+
+  // 4) Try to extract first {...} block and repeat the same strategy
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start >= 0 && end > start) {
     const sub = s.slice(start, end + 1);
+
+    // Try direct
     try {
       return JSON.parse(sub);
     } catch {}
+
+    // Try unescaped
+    const unescapedSub = sub
+      .replace(/\\r\\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'")
+      .replace(/\\\\/g, "\\");
+
+    try {
+      return JSON.parse(unescapedSub);
+    } catch {}
   }
+
   return null;
 }
 
